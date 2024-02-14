@@ -1,0 +1,5 @@
+articles/
+comments/
+*.db
+cpu.prof
+uriage
