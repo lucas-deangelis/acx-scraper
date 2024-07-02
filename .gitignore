@@ -1,5 +1,6 @@
 articles/
 comments/
 *.db
+*.db.gz
 cpu.prof
 uriage
