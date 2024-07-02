@@ -1,4 +1,4 @@
-module uriage
+module github.com/lucas-deangelis/acx-scraper
 
 go 1.21.3
 
