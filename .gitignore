@@ -3,4 +3,5 @@ comments/
 *.db
 *.db.gz
 cpu.prof
-uriage
+acx-scraper
+acx-comments*

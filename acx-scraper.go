@@ -142,6 +142,52 @@ func (c *commentsCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 	return subcommands.ExitSuccess
 }
 
+type bodiesCmd struct {
+	database   string
+	cpuProfile bool
+}
+
+func (*bodiesCmd) Name() string {
+	return "bodies"
+}
+
+func (*bodiesCmd) Synopsis() string {
+	return "Get all the articles bodies from ACX."
+}
+
+func (*bodiesCmd) Usage() string {
+	return `bodies [-d/-database <database_name>] -c/-cpuProfile
+	Read the database to get all the articles, get article bodies for each articles,
+	insert them in the database.
+`
+}
+
+func (c *bodiesCmd) SetFlags(f *flag.FlagSet) {
+	date := time.Now().Format("2006-01-02")
+	dbName := "acx-comments_" + date + ".db"
+	usage := "sqlite database name. The default name is acx-comments_YYYY-MM-DD.db"
+	f.StringVar(&c.database, "database", dbName, usage)
+	f.StringVar(&c.database, "d", dbName, usage)
+	f.BoolVar(&c.cpuProfile, "c", false, "write cpu profile")
+	f.BoolVar(&c.cpuProfile, "cpuProfile", false, "write cpu profile")
+}
+
+func (c *bodiesCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
+	if c.cpuProfile {
+		a, err := os.Create("cpu.prof")
+		if err != nil {
+			panic(err)
+		}
+		if err := pprof.StartCPUProfile(a); err != nil {
+			panic(err)
+		}
+		defer pprof.StopCPUProfile()
+	}
+
+	getBodies(c.database)
+	return subcommands.ExitSuccess
+}
+
 func main() {
 	subcommands.Register(subcommands.HelpCommand(), "")
 	subcommands.Register(subcommands.FlagsCommand(), "")
@@ -149,6 +195,7 @@ func main() {
 
 	subcommands.Register(&articlesCmd{}, "")
 	subcommands.Register(&commentsCmd{}, "")
+	subcommands.Register(&bodiesCmd{}, "")
 
 	flag.Parse()
 	ctx := context.Background()
@@ -156,7 +203,6 @@ func main() {
 }
 
 func flattenComments(comments []comment) []comment {
-	// fmt.Printf("Comments: %+v\n", comments)
 	if len(comments) == 0 {
 		return []comment{}
 	}
@@ -204,6 +250,82 @@ func insertComments(db *sql.DB, comments []comment) error {
 	}
 
 	return nil
+}
+
+func getBodies(databaseName string) {
+	db, err := sql.Open("sqlite3", databaseName)
+	if err != nil {
+		log.Fatalf("Failed to open database %s: %v", databaseName, err)
+	}
+	defer db.Close()
+
+	// commentsSchema := `ALTER TABLE articles ADD COLUMN BodyHTML TEXT;`
+
+	// _, err = db.Exec(commentsSchema)
+	// if err != nil {
+	// 	log.Fatalf("Failed to alter 'comments' table: %v", err)
+	// }
+
+	rows, err := db.Query(`SELECT Slug FROM articles;`)
+	if err != nil {
+		log.Fatalf("Failed to get the articles IDs: %v", err)
+	}
+	defer rows.Close()
+	var articlesSlugs []string
+	for rows.Next() {
+		var articleSlug string
+		if err := rows.Scan(&articleSlug); err != nil {
+			log.Fatal(err)
+		}
+		articlesSlugs = append(articlesSlugs, articleSlug)
+	}
+
+	for _, articleSlug := range articlesSlugs {
+		url := fmt.Sprintf("https://www.astralcodexten.com/api/v1/posts/%s", articleSlug)
+		fmt.Println(url)
+
+		// Create a new request
+		req, err := http.NewRequest("GET", url, nil)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			continue
+		}
+
+		// Add the "Accept: application/json" header
+		req.Header.Add("Accept", "application/json")
+
+		// Send the request using http.Client
+		client := &http.Client{}
+		res, err := client.Do(req)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			continue
+		}
+		defer res.Body.Close()
+
+		body, err := io.ReadAll(res.Body)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			continue
+		}
+
+		var articleResponse struct {
+			BodyHTML string `json:"body_html"`
+		}
+		err = json.Unmarshal(body, &articleResponse)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			continue
+		}
+
+		_, err = db.Exec(`UPDATE articles SET BodyHTML = ? WHERE Slug = ?;`, articleResponse.BodyHTML, articleSlug)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			continue
+		}
+
+		time.Sleep(1 * time.Second)
+	}
 }
 
 func getComments(databaseName string) {
